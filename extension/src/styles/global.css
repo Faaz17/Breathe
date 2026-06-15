@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Theme tokens — calm, quiet defaults. See .claude/rules/design_rules.md.
+   Inter falls back to the system UI font until a font file ships. */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+}
+
+/* Respect reduced-motion everywhere (accessibility checklist). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

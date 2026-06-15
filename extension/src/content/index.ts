@@ -1,4 +1,6 @@
+import { Message } from '../lib/messages';
 import { detectMeeting } from '../lib/meeting';
+import { capture } from './capture';
 import { mountPanel, type PanelHandle } from './mount';
 
 let panel: PanelHandle | null = null;
@@ -31,6 +33,22 @@ function watchSpaNavigation(onChange: () => void): void {
   history.replaceState = wrap(history.replaceState);
   window.addEventListener('popstate', onChange);
 }
+
+// The service worker relays the live level and recording flag from the offscreen
+// document; the panel renders them.
+chrome.runtime.onMessage.addListener((raw) => {
+  const parsed = Message.safeParse(raw);
+  if (!parsed.success) return;
+
+  switch (parsed.data.type) {
+    case 'VU':
+      capture.setLevel(parsed.data.level);
+      return;
+    case 'RECORDING':
+      capture.setRecording(parsed.data.recording);
+      return;
+  }
+});
 
 watchSpaNavigation(sync);
 

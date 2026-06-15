@@ -1,14 +1,12 @@
+import { VuMeter } from './VuMeter';
+
 interface SidePanelProps {
   recording: boolean;
-  onToggleRecording: () => void;
+  onStop: () => void;
   onCollapse: () => void;
 }
 
-export function SidePanel({
-  recording,
-  onToggleRecording,
-  onCollapse,
-}: SidePanelProps) {
+export function SidePanel({ recording, onStop, onCollapse }: SidePanelProps) {
   return (
     <section
       aria-label="Breathe meeting notes"
@@ -54,23 +52,26 @@ export function SidePanel({
         </button>
       </header>
 
-      <button
-        type="button"
-        onClick={onToggleRecording}
-        className={
-          recording
-            ? 'w-full rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400'
-            : 'w-full rounded-lg bg-emerald-500 px-3 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300'
-        }
-      >
-        {recording ? 'Stop' : 'Start recording'}
-      </button>
-
-      <p className="text-xs leading-relaxed text-zinc-500">
-        {recording
-          ? 'Audio capture & live transcript arrive in Phase 2.'
-          : 'Press Start to begin. Nothing records until you do.'}
-      </p>
+      {recording ? (
+        <>
+          <VuMeter />
+          <button
+            type="button"
+            onClick={onStop}
+            className="w-full rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          >
+            Stop
+          </button>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Capturing tab audio locally. Live transcript arrives in Phase 3.
+          </p>
+        </>
+      ) : (
+        <p className="text-sm leading-relaxed text-zinc-400">
+          Click the Breathe toolbar icon to start recording. Nothing records
+          until you do.
+        </p>
+      )}
 
       <div className="flex items-center justify-between border-t border-zinc-800 pt-2">
         <button

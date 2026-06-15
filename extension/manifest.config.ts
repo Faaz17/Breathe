@@ -38,7 +38,7 @@ export default defineManifest({
     service_worker: 'src/background/index.ts',
     type: 'module',
   },
-  permissions: ['tabCapture', 'storage', 'activeTab', 'scripting'],
+  permissions: ['tabCapture', 'storage', 'activeTab', 'scripting', 'offscreen'],
   host_permissions: [
     '*://meet.google.com/*',
     '*://*.zoom.us/wc/*',

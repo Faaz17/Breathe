@@ -22,5 +22,12 @@ export default defineConfig({
     target: 'esnext',
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      // The offscreen document isn't referenced from the manifest (the service
+      // worker opens it via chrome.offscreen), so register it as an extra entry.
+      input: {
+        offscreen: 'src/offscreen/index.html',
+      },
+    },
   },
 });

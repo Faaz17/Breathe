@@ -2,9 +2,16 @@ import { defineManifest } from '@crxjs/vite-plugin';
 
 // MV3 manifest. Permissions are kept to the documented minimum (tech_defaults.md):
 // tabCapture (audio), storage (settings + session metadata), activeTab (gentle,
-// paired with user gestures). host_permissions are scoped to the three meeting
-// platforms only — never <all_urls>. The Groq fetch host is requested at runtime
-// via optional_host_permissions when the user first hits Summarise (Phase 4).
+// paired with user gestures), scripting (the service worker registers the content
+// script at runtime). host_permissions are scoped to the three meeting platforms
+// only — never <all_urls>. The Groq fetch host is requested at runtime via
+// optional_host_permissions when the user first hits Summarise (Phase 4).
+//
+// The content script is NOT declared here. Meeting pages (Google Meet) enforce a
+// `strict-dynamic` CSP that blocks crxjs's dynamic-import content-script loader, so
+// the service worker injects a self-contained IIFE (built by vite.content.config.ts)
+// as a classic content script via chrome.scripting — classic content scripts run in
+// the isolated world, exempt from the page's CSP. See src/background/index.ts.
 export default defineManifest({
   manifest_version: 3,
   name: 'Breathe',
@@ -27,7 +34,11 @@ export default defineManifest({
       128: 'icons/icon-128.png',
     },
   },
-  permissions: ['tabCapture', 'storage', 'activeTab'],
+  background: {
+    service_worker: 'src/background/index.ts',
+    type: 'module',
+  },
+  permissions: ['tabCapture', 'storage', 'activeTab', 'scripting'],
   host_permissions: [
     '*://meet.google.com/*',
     '*://*.zoom.us/wc/*',

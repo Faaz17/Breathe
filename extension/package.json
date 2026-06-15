@@ -6,7 +6,8 @@
   "description": "Breathe — privacy-first, local meeting notes browser extension (MV3).",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.content.config.ts",
+    "build:content": "vite build --config vite.content.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "icons": "node scripts/gen-icons.mjs"

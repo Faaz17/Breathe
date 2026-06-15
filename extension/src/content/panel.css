@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* The shadow host floats top-right, above everything the meeting page draws.
+   Shrink-to-fit width: the host wraps the launcher (48px) or the panel (320px). */
+:host {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 2147483647;
+}
+
+/* Calm entrance: fade + small slide. Suppressed under reduced-motion. */
+@keyframes breathe-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .breathe-animate-in {
+    animation: breathe-in 200ms ease-out both;
+  }
+}

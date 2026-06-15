@@ -22,5 +22,5 @@
 
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "manifest.config.ts"]
+  "include": ["vite.config.ts", "vite.content.config.ts", "manifest.config.ts"]
 }

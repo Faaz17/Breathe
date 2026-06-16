@@ -8,7 +8,7 @@
 // Run with: node scripts/copy-ort.mjs  (chained from the build script)
 
 import { createRequire } from 'node:module';
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,15 +35,24 @@ function resolveOrtDist() {
 
 const ortDist = resolveOrtDist();
 const outDir = join(scriptDir, '..', 'public', 'ort');
+// Start clean so variants dropped from WANTED_VARIANTS don't linger from old builds.
+rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
-// The whole threaded-SIMD family (plain + asyncify/jsep/jspi) so ORT's runtime
-// backend selection always finds the variant it picks for this browser.
-const PREFIX = 'ort-wasm-simd-threaded';
+// Only the two variants we actually use: jsep (the WebGPU backend) and asyncify
+// (the single-thread WASM fallback). The plain threaded build needs SharedArrayBuffer
+// (not available without cross-origin isolation) and jspi is unused — skipping both
+// roughly halves the bundled wasm.
+const WANTED_VARIANTS = ['.jsep.', '.asyncify.'];
+
+function isWanted(file) {
+  if (!file.endsWith('.wasm') && !file.endsWith('.mjs')) return false;
+  return WANTED_VARIANTS.some((variant) => file.includes(variant));
+}
 
 let copied = 0;
 for (const file of readdirSync(ortDist)) {
-  if (file.startsWith(PREFIX) && (file.endsWith('.wasm') || file.endsWith('.mjs'))) {
+  if (isWanted(file)) {
     copyFileSync(join(ortDist, file), join(outDir, file));
     copied += 1;
     console.log(`copied ort/${file}`);

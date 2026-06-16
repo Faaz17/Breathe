@@ -13,10 +13,35 @@ import {
  * lib conflict; `self` message/post APIs are reached through narrow casts.
  */
 
-// whisper-tiny.en: fast session-init + real-time inference on the single-thread
-// WASM backend (base.en's heavy decoder stalls there). Bump to base.en once
-// WebGPU lands (Phase 6 perf upgrade) for higher accuracy.
-const MODEL = 'Xenova/whisper-tiny.en';
+// whisper-base.en — notably more accurate than tiny. In fp16 it's ~146 MB
+// (≈ the tiny.en fp32 download) and runs comfortably on WebGPU. fp16 has no
+// MatMulNBits nodes, so it avoids the quantization session-creation bug.
+const MODEL = 'Xenova/whisper-base.en';
+
+// Whisper invents stock phrases on silence/noise (esp. short clips). Drop a chunk
+// whose entire output is one of these — but only when it's the WHOLE output, so a
+// real "thank you" inside a sentence is kept.
+const HALLUCINATION_PHRASES = new Set([
+  'thank you',
+  'thanks',
+  'thank you so much',
+  'thanks for watching',
+  'thank you for watching',
+  'please subscribe',
+  'you',
+  'bye',
+  'bye bye',
+  'the end',
+]);
+
+function isHallucination(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized === '' || HALLUCINATION_PHRASES.has(normalized);
+}
 
 type Pipe = AutomaticSpeechRecognitionPipeline;
 type InMessage =
@@ -54,8 +79,9 @@ function progressCallback(report: { status: string; progress?: number }): void {
 function buildPipeline(device: 'webgpu' | 'wasm'): Promise<Pipe> {
   return pipeline('automatic-speech-recognition', MODEL, {
     device,
-    // fp32, not q8: the quantized (MatMulNBits) weights trip a "missing scale"
-    // session-creation bug in this pinned ORT dev build. fp32 has no DQ nodes.
+    // fp32 only. fp16 degenerates on this WebGPU/ORT decoder (repetitive token
+    // garbage), and q4/q8 (MatMulNBits) hit a session-creation bug in this ORT
+    // dev build. fp32 is the one precision confirmed to produce clean output.
     dtype: 'fp32',
     progress_callback: progressCallback,
   });
@@ -112,7 +138,7 @@ async function transcribe(audio: Float32Array): Promise<void> {
     const output = await ready(audio);
     const text = (Array.isArray(output) ? output[0]?.text : output.text) ?? '';
     const trimmed = text.trim();
-    if (trimmed) post({ type: 'text', text: trimmed });
+    if (trimmed && !isHallucination(trimmed)) post({ type: 'text', text: trimmed });
   } catch (error) {
     console.error('Breathe whisper worker: inference failed', error);
   } finally {

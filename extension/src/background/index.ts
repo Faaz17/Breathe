@@ -8,6 +8,7 @@ import {
   getSettings,
   pruneOldSessions,
   saveSummary,
+  type Session,
 } from '../lib/db';
 import { detectMeeting, type Platform } from '../lib/meeting';
 import { summarise } from '../lib/groq';
@@ -61,6 +62,40 @@ async function setActiveSession(active: ActiveSession | null): Promise<void> {
     await chrome.storage.session.remove('active');
   }
 }
+
+/**
+ * Last session recorded per tab — unlike `active`, NOT cleared on stop, so a tab
+ * can summarise its own just-finished session even after another tab records.
+ */
+async function setLastSessionForTab(tabId: number, sessionId: string): Promise<void> {
+  const { lastByTab } = await chrome.storage.session.get('lastByTab');
+  const map = lastByTab && typeof lastByTab === 'object' ? { ...lastByTab } : {};
+  (map as Record<string, string>)[String(tabId)] = sessionId;
+  await chrome.storage.session.set({ lastByTab: map });
+}
+
+async function getLastSessionForTab(tabId: number): Promise<string | null> {
+  const { lastByTab } = await chrome.storage.session.get('lastByTab');
+  const id =
+    lastByTab && typeof lastByTab === 'object'
+      ? (lastByTab as Record<string, string>)[String(tabId)]
+      : undefined;
+  return typeof id === 'string' ? id : null;
+}
+
+/**
+ * Relay a message to a tab, swallowing the "Receiving end does not exist"
+ * rejection that occurs when the panel was torn down (navigation, tab close,
+ * SPA route change) — common for the long-latency summarise relay.
+ */
+function relayToTab(tabId: number, message: Message): void {
+  void chrome.tabs.sendMessage(tabId, message).catch(() => {
+    // Panel/tab is gone; any durable result is already in IndexedDB.
+  });
+}
+
+// Guards against a double-click firing two concurrent (billable) Groq calls.
+let summarising = false;
 
 function defaultTitle(platform: Platform, startedAt: number): string {
   const when = new Date(startedAt).toLocaleString(undefined, {
@@ -124,8 +159,8 @@ async function startRecording(tabId: number): Promise<void> {
 
   recordingTabId = tabId;
   await setActiveSession({ tabId, sessionId: session.id });
-  const recording: Message = { type: 'RECORDING', recording: true };
-  void chrome.tabs.sendMessage(tabId, recording);
+  await setLastSessionForTab(tabId, session.id);
+  relayToTab(tabId, { type: 'RECORDING', recording: true });
 }
 
 async function stopRecording(tabId: number): Promise<void> {
@@ -138,8 +173,7 @@ async function stopRecording(tabId: number): Promise<void> {
   await setActiveSession(null);
 
   recordingTabId = null;
-  const recording: Message = { type: 'RECORDING', recording: false };
-  void chrome.tabs.sendMessage(tabId, recording);
+  relayToTab(tabId, { type: 'RECORDING', recording: false });
 }
 
 async function pruneOnStartup(): Promise<void> {
@@ -148,36 +182,55 @@ async function pruneOnStartup(): Promise<void> {
 }
 
 /**
- * Summarise a session via Groq (the only outbound call). Defaults to the most
- * recent session — i.e. the one just recorded. Saves the markdown to the session
- * and relays it to the panel; surfaces typed errors so the panel can show a CTA.
+ * Resolve which session a tab's Summarise targets: an explicit id wins, else the
+ * tab's own last recorded session, else the most recent *finished* session as a
+ * safety net. Never the global-newest (wrong tab) or an in-progress one.
+ */
+async function resolveSummariseTarget(
+  tabId: number,
+  sessionId: string | undefined,
+): Promise<Session | undefined> {
+  if (sessionId) return getSession(sessionId);
+  const lastId = await getLastSessionForTab(tabId);
+  if (lastId) return getSession(lastId);
+  return (await getAllSessions()).find((session) => session.endedAt !== null);
+}
+
+/**
+ * Summarise a session via Groq (the only outbound call). Saves the markdown to the
+ * session and relays it to the panel; surfaces typed errors so the panel can show
+ * a CTA. Loading is only emitted once the checks pass (no loading→error flash), and
+ * an in-flight guard drops concurrent clicks.
  */
 async function handleSummarise(tabId: number, sessionId: string | undefined): Promise<void> {
   const send = (state: 'loading' | 'done' | 'error', extra: Partial<Message> = {}) =>
-    void chrome.tabs.sendMessage(tabId, { type: 'SUMMARY_STATUS', state, ...extra } as Message);
+    relayToTab(tabId, { type: 'SUMMARY_STATUS', state, ...extra } as Message);
 
-  send('loading');
+  if (summarising) return;
+  summarising = true; // set synchronously before any await so a double-click can't slip past
+  try {
+    if (!(await chrome.permissions.contains({ origins: [GROQ_ORIGIN] }))) {
+      send('error', { error: 'permission' });
+      return;
+    }
 
-  if (!(await chrome.permissions.contains({ origins: [GROQ_ORIGIN] }))) {
-    send('error', { error: 'permission' });
-    return;
-  }
+    const session = await resolveSummariseTarget(tabId, sessionId);
+    if (!session || !session.transcript.trim()) {
+      send('error', { error: 'empty' });
+      return;
+    }
 
-  const settings = await getSettings();
-  const session = sessionId
-    ? await getSession(sessionId)
-    : (await getAllSessions())[0];
-  if (!session || !session.transcript.trim()) {
-    send('error', { error: 'empty' });
-    return;
-  }
-
-  const result = await summarise(session.transcript, settings.groqApiKey, settings.model);
-  if (result.ok) {
-    await saveSummary(session.id, result.markdown);
-    send('done', { markdown: result.markdown });
-  } else {
-    send('error', { error: result.error });
+    send('loading'); // only after the gates pass — no loading→error flash
+    const settings = await getSettings();
+    const result = await summarise(session.transcript, settings.groqApiKey, settings.model);
+    if (result.ok) {
+      await saveSummary(session.id, result.markdown);
+      send('done', { markdown: result.markdown });
+    } else {
+      send('error', { error: result.error });
+    }
+  } finally {
+    summarising = false;
   }
 }
 
@@ -228,40 +281,34 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true; // async sendResponse
     }
 
-    case 'VU_LEVEL': {
-      const vu: Message = { type: 'VU', level: message.level };
-      void chrome.tabs.sendMessage(message.tabId, vu);
+    case 'VU_LEVEL':
+      relayToTab(message.tabId, { type: 'VU', level: message.level });
       return;
-    }
 
     case 'TRANSCRIPT_CHUNK': {
       const { tabId, text } = message;
       void getActiveSession().then((active) => {
         if (active) void appendTranscript(active.sessionId, text);
       });
-      const relay: Message = { type: 'TRANSCRIPT', text };
-      void chrome.tabs.sendMessage(tabId, relay);
+      relayToTab(tabId, { type: 'TRANSCRIPT', text });
       return;
     }
 
-    case 'TRANSCRIBE_STATUS': {
-      const relay: Message = {
+    case 'TRANSCRIBE_STATUS':
+      relayToTab(message.tabId, {
         type: 'STT_STATUS',
         state: message.state,
         progress: message.progress,
         message: message.message,
-      };
-      void chrome.tabs.sendMessage(message.tabId, relay);
+      });
       return;
-    }
 
     case 'SUMMARISE': {
       const tabId = sender.tab?.id;
       if (tabId !== undefined) {
         handleSummarise(tabId, message.sessionId).catch((error: unknown) => {
           console.error('Breathe: summarise failed', error);
-          const relay: Message = { type: 'SUMMARY_STATUS', state: 'error', error: 'network' };
-          void chrome.tabs.sendMessage(tabId, relay);
+          relayToTab(tabId, { type: 'SUMMARY_STATUS', state: 'error', error: 'network' });
         });
       }
       return;

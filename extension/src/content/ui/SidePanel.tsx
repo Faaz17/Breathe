@@ -32,7 +32,9 @@ export function SidePanel({
   onSummarise,
   onOpenOptions,
 }: SidePanelProps) {
-  const canSummarise = transcript.trim() !== '' && summaryState !== 'loading';
+  // Only after Stop (per the design): summarising a still-growing transcript would
+  // spend a Groq call on partial, immediately-stale notes.
+  const canSummarise = !recording && transcript.trim() !== '' && summaryState !== 'loading';
   return (
     <section
       aria-label="Breathe meeting notes"

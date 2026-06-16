@@ -13,6 +13,8 @@ function requestStop(): void {
 }
 
 function requestSummarise(): void {
+  // The service worker emits 'loading' once its checks pass and dedupes concurrent
+  // calls with an in-flight guard, so a stray double-click is harmless here.
   const message: Message = { type: 'SUMMARISE' };
   void chrome.runtime.sendMessage(message);
 }

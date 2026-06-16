@@ -1,4 +1,12 @@
 import { type Ack, Message, type RecordingState } from '../lib/messages';
+import {
+  appendTranscript,
+  createSession,
+  finalizeSession,
+  getSettings,
+  pruneOldSessions,
+} from '../lib/db';
+import { detectMeeting, type Platform } from '../lib/meeting';
 
 const SCRIPT_ID = 'breathe-content';
 const OFFSCREEN_URL = 'src/offscreen/index.html';
@@ -9,7 +17,54 @@ const MEETING_MATCHES = [
   '*://*.webex.com/*',
 ];
 
+const PLATFORM_LABEL: Record<Platform, string> = {
+  gmeet: 'Google Meet',
+  zoom: 'Zoom',
+  webex: 'Webex',
+};
+
 let recordingTabId: number | null = null;
+
+/**
+ * The active recording's session id is persisted in chrome.storage.session so it
+ * survives the service worker sleeping mid-meeting — transcript chunks arrive as
+ * messages that wake the worker, and it needs to know which session to append to.
+ */
+interface ActiveSession {
+  tabId: number;
+  sessionId: string;
+}
+
+async function getActiveSession(): Promise<ActiveSession | null> {
+  const { active } = await chrome.storage.session.get('active');
+  if (
+    active &&
+    typeof active === 'object' &&
+    typeof (active as ActiveSession).tabId === 'number' &&
+    typeof (active as ActiveSession).sessionId === 'string'
+  ) {
+    return active as ActiveSession;
+  }
+  return null;
+}
+
+async function setActiveSession(active: ActiveSession | null): Promise<void> {
+  if (active) {
+    await chrome.storage.session.set({ active });
+  } else {
+    await chrome.storage.session.remove('active');
+  }
+}
+
+function defaultTitle(platform: Platform, startedAt: number): string {
+  const when = new Date(startedAt).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return `${PLATFORM_LABEL[platform]} — ${when}`;
+}
 
 /**
  * Registers the self-contained content script (content.js) as a CLASSIC content
@@ -45,11 +100,24 @@ async function ensureOffscreen(): Promise<void> {
 async function startRecording(tabId: number): Promise<void> {
   // Mint a single-use stream id for the meeting tab; consumed by the offscreen doc.
   const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+
+  const tab = await chrome.tabs.get(tabId);
+  const meeting = tab.url ? detectMeeting(new URL(tab.url)) : null;
+  const platform: Platform = meeting?.platform ?? 'gmeet';
+  const startedAt = Date.now();
+  const session = await createSession({
+    platform,
+    meetingUrl: meeting?.meetingUrl ?? tab.url ?? '',
+    title: defaultTitle(platform, startedAt),
+    startedAt,
+  });
+
   await ensureOffscreen();
   const start: Message = { type: 'OFFSCREEN_START', streamId, tabId };
   await chrome.runtime.sendMessage(start);
 
   recordingTabId = tabId;
+  await setActiveSession({ tabId, sessionId: session.id });
   const recording: Message = { type: 'RECORDING', recording: true };
   void chrome.tabs.sendMessage(tabId, recording);
 }
@@ -59,9 +127,18 @@ async function stopRecording(tabId: number): Promise<void> {
   await chrome.runtime.sendMessage(stop);
   if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument();
 
+  const active = await getActiveSession();
+  if (active) await finalizeSession(active.sessionId, Date.now());
+  await setActiveSession(null);
+
   recordingTabId = null;
   const recording: Message = { type: 'RECORDING', recording: false };
   void chrome.tabs.sendMessage(tabId, recording);
+}
+
+async function pruneOnStartup(): Promise<void> {
+  const settings = await getSettings();
+  await pruneOldSessions(settings.retentionDays, Date.now());
 }
 
 chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
@@ -84,19 +161,31 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       return true; // async sendResponse
 
     case 'STOP_RECORDING': {
-      const tabId = sender.tab?.id ?? recordingTabId;
-      if (tabId !== null && tabId !== undefined) {
+      const senderTabId = sender.tab?.id;
+      const stopTab = senderTabId ?? recordingTabId;
+      const finish = (tabId: number) =>
         stopRecording(tabId).catch((error: unknown) => {
           console.error('Breathe: could not stop recording', error);
+        });
+      if (stopTab !== null && stopTab !== undefined) {
+        void finish(stopTab);
+      } else {
+        // Service worker slept and lost recordingTabId; recover it from storage.
+        void getActiveSession().then((active) => {
+          if (active) void finish(active.tabId);
         });
       }
       return;
     }
 
     case 'GET_STATE': {
-      const state: RecordingState = { recording: recordingTabId === message.tabId };
-      sendResponse(state);
-      return;
+      // The persisted active session is authoritative — recordingTabId is lost
+      // when the service worker sleeps mid-meeting.
+      void getActiveSession().then((active) => {
+        const state: RecordingState = { recording: active?.tabId === message.tabId };
+        sendResponse(state);
+      });
+      return true; // async sendResponse
     }
 
     case 'VU_LEVEL': {
@@ -104,22 +193,58 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       void chrome.tabs.sendMessage(message.tabId, vu);
       return;
     }
+
+    case 'TRANSCRIPT_CHUNK': {
+      const { tabId, text } = message;
+      void getActiveSession().then((active) => {
+        if (active) void appendTranscript(active.sessionId, text);
+      });
+      const relay: Message = { type: 'TRANSCRIPT', text };
+      void chrome.tabs.sendMessage(tabId, relay);
+      return;
+    }
+
+    case 'TRANSCRIBE_STATUS': {
+      const relay: Message = {
+        type: 'STT_STATUS',
+        state: message.state,
+        progress: message.progress,
+        message: message.message,
+      };
+      void chrome.tabs.sendMessage(message.tabId, relay);
+      return;
+    }
   }
 });
 
-// If the meeting tab closes while recording, tear capture down.
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (recordingTabId === tabId) {
-    void stopRecording(tabId).catch(() => {
-      // tab already gone; nothing to notify
+/** Stops recording if the given tab is the one being recorded (storage is authoritative). */
+async function stopIfRecording(tabId: number): Promise<void> {
+  const active = await getActiveSession();
+  if (active?.tabId === tabId || recordingTabId === tabId) {
+    await stopRecording(tabId).catch(() => {
+      // tab already gone or navigated; transcript chunks were persisted as they arrived
     });
   }
+}
+
+// If the meeting tab closes while recording, tear capture down.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void stopIfRecording(tabId);
+});
+
+// A full reload or navigation of the meeting tab ends the session cleanly — the
+// captured stream is gone, and the partial transcript is already saved. (SPA
+// route changes inside the meeting use the History API and don't fire 'loading'.)
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading') void stopIfRecording(tabId);
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   void syncContentScript();
+  void pruneOnStartup();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void syncContentScript();
+  void pruneOnStartup();
 });

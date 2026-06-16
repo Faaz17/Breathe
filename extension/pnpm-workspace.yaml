@@ -1,4 +1,10 @@
 # pnpm reads build-script approvals from here (not from package.json).
 # esbuild ships a native binary and needs its install script to run.
+# onnxruntime-node / sharp / protobufjs are Node-only native deps of
+# @huggingface/transformers; the extension uses the browser wasm path
+# (onnxruntime-web) instead, so their build scripts are intentionally skipped.
 allowBuilds:
   esbuild: true
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: false

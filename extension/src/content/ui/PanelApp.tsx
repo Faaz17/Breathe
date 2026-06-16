@@ -14,10 +14,12 @@ function requestStop(): void {
 
 export function PanelApp() {
   const [view, setView] = useState<View>('launcher');
-  const recording = useSyncExternalStore(
-    (onChange) => capture.subscribe(onChange),
-    () => capture.isRecording(),
-  );
+  const subscribe = (onChange: () => void) => capture.subscribe(onChange);
+  const recording = useSyncExternalStore(subscribe, () => capture.isRecording());
+  const transcript = useSyncExternalStore(subscribe, () => capture.getTranscript());
+  const sttState = useSyncExternalStore(subscribe, () => capture.getSttState());
+  const sttProgress = useSyncExternalStore(subscribe, () => capture.getSttProgress());
+  const sttMessage = useSyncExternalStore(subscribe, () => capture.getSttMessage());
 
   // Auto-expand the panel when recording starts, so the VU meter is visible.
   useEffect(() => {
@@ -31,6 +33,10 @@ export function PanelApp() {
   return (
     <SidePanel
       recording={recording}
+      transcript={transcript}
+      sttState={sttState}
+      sttProgress={sttProgress}
+      sttMessage={sttMessage}
       onStop={requestStop}
       onCollapse={() => setView('launcher')}
     />

@@ -8,6 +8,10 @@ import { z } from 'zod';
  *   (OFFSCREEN_START) → offscreen captures + plays back + analyses → offscreen
  *   → SW (VU_LEVEL) → SW → content script (VU) → panel meter.
  */
+/** State of the in-browser Whisper transcriber, surfaced to the panel. */
+export const SttState = z.enum(['loading', 'ready', 'error']);
+export type SttState = z.infer<typeof SttState>;
+
 export const Message = z.discriminatedUnion('type', [
   // popup → service worker
   z.object({ type: z.literal('START_RECORDING'), tabId: z.number() }),
@@ -19,9 +23,24 @@ export const Message = z.discriminatedUnion('type', [
   z.object({ type: z.literal('OFFSCREEN_STOP') }),
   // offscreen document → service worker
   z.object({ type: z.literal('VU_LEVEL'), tabId: z.number(), level: z.number() }),
+  z.object({ type: z.literal('TRANSCRIPT_CHUNK'), tabId: z.number(), text: z.string() }),
+  z.object({
+    type: z.literal('TRANSCRIBE_STATUS'),
+    tabId: z.number(),
+    state: SttState,
+    progress: z.number().optional(),
+    message: z.string().optional(),
+  }),
   // service worker → content script
   z.object({ type: z.literal('VU'), level: z.number() }),
   z.object({ type: z.literal('RECORDING'), recording: z.boolean() }),
+  z.object({ type: z.literal('TRANSCRIPT'), text: z.string() }),
+  z.object({
+    type: z.literal('STT_STATUS'),
+    state: SttState,
+    progress: z.number().optional(),
+    message: z.string().optional(),
+  }),
 ]);
 export type Message = z.infer<typeof Message>;
 

@@ -47,6 +47,12 @@ chrome.runtime.onMessage.addListener((raw) => {
     case 'RECORDING':
       capture.setRecording(parsed.data.recording);
       return;
+    case 'TRANSCRIPT':
+      capture.appendTranscript(parsed.data.text);
+      return;
+    case 'STT_STATUS':
+      capture.setSttStatus(parsed.data.state, parsed.data.progress, parsed.data.message);
+      return;
   }
 });
 

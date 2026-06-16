@@ -45,4 +45,19 @@ export default defineManifest({
     '*://*.webex.com/*',
   ],
   optional_host_permissions: ['https://api.groq.com/*'],
+  // The offscreen document runs the local Whisper model. MV3 forbids anything but
+  // 'self'/'wasm-unsafe-eval' in script-src, so: 'wasm-unsafe-eval' lets ONNX
+  // Runtime compile its WebAssembly, the worker + wasm load from 'self' (bundled
+  // same-origin assets), and connect-src allows the one-time model-weight download
+  // from HuggingFace (cached thereafter). The same-origin module worker is covered
+  // by the script-src 'self' fallback, so no worker-src/blob: is needed.
+  //
+  // HF model files redirect from huggingface.co to its Xet storage backend
+  // (cas-bridge.xethub.hf.co). Both *.hf.co and the explicit *.xethub.hf.co are
+  // listed so it matches regardless of how strictly Chrome treats wildcard depth.
+  // *.huggingface.co keeps the older cdn-lfs hosts.
+  content_security_policy: {
+    extension_pages:
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' data: blob: https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co;",
+  },
 });

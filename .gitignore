@@ -8,6 +8,9 @@ extension/.vite/
 dist/
 build/
 
+# Bundled ORT wasm (regenerated from node_modules by scripts/copy-ort.mjs on build)
+extension/public/ort/
+
 # Vite
 .vite/
 

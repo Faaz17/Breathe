@@ -1,12 +1,26 @@
+import type { SttState } from '../../lib/messages';
+import { Transcript } from './Transcript';
 import { VuMeter } from './VuMeter';
 
 interface SidePanelProps {
   recording: boolean;
+  transcript: string;
+  sttState: SttState | 'idle';
+  sttProgress: number;
+  sttMessage: string;
   onStop: () => void;
   onCollapse: () => void;
 }
 
-export function SidePanel({ recording, onStop, onCollapse }: SidePanelProps) {
+export function SidePanel({
+  recording,
+  transcript,
+  sttState,
+  sttProgress,
+  sttMessage,
+  onStop,
+  onCollapse,
+}: SidePanelProps) {
   return (
     <section
       aria-label="Breathe meeting notes"
@@ -52,7 +66,7 @@ export function SidePanel({ recording, onStop, onCollapse }: SidePanelProps) {
         </button>
       </header>
 
-      {recording ? (
+      {recording && (
         <>
           <VuMeter />
           <button
@@ -62,10 +76,17 @@ export function SidePanel({ recording, onStop, onCollapse }: SidePanelProps) {
           >
             Stop
           </button>
-          <p className="text-xs leading-relaxed text-zinc-500">
-            Capturing tab audio locally. Live transcript arrives in Phase 3.
-          </p>
         </>
+      )}
+
+      {recording || transcript ? (
+        <Transcript
+          text={transcript}
+          status={sttState}
+          progress={sttProgress}
+          message={sttMessage}
+          recording={recording}
+        />
       ) : (
         <p className="text-sm leading-relaxed text-zinc-400">
           Click the Breathe toolbar icon to start recording. Nothing records

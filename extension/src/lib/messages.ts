@@ -12,12 +12,26 @@ import { z } from 'zod';
 export const SttState = z.enum(['loading', 'ready', 'error']);
 export type SttState = z.infer<typeof SttState>;
 
+/** Why a Groq summarise attempt failed (drives the panel's message + CTA). */
+export const SummaryError = z.enum([
+  'no-key', // user hasn't set an API key
+  'permission', // host permission for api.groq.com not granted
+  'empty', // nothing recorded to summarise
+  'auth', // 401 — bad/expired key
+  'rate-limit', // 429 after one retry
+  'network', // fetch failed / non-OK
+  'bad-response', // unexpected response shape
+]);
+export type SummaryError = z.infer<typeof SummaryError>;
+
 export const Message = z.discriminatedUnion('type', [
   // popup → service worker
   z.object({ type: z.literal('START_RECORDING'), tabId: z.number() }),
   z.object({ type: z.literal('GET_STATE'), tabId: z.number() }),
   // panel (content script) → service worker
   z.object({ type: z.literal('STOP_RECORDING') }),
+  z.object({ type: z.literal('SUMMARISE'), sessionId: z.string().optional() }),
+  z.object({ type: z.literal('OPEN_OPTIONS') }),
   // service worker → offscreen document
   z.object({ type: z.literal('OFFSCREEN_START'), streamId: z.string(), tabId: z.number() }),
   z.object({ type: z.literal('OFFSCREEN_STOP') }),
@@ -40,6 +54,12 @@ export const Message = z.discriminatedUnion('type', [
     state: SttState,
     progress: z.number().optional(),
     message: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal('SUMMARY_STATUS'),
+    state: z.enum(['loading', 'done', 'error']),
+    markdown: z.string().optional(),
+    error: SummaryError.optional(),
   }),
 ]);
 export type Message = z.infer<typeof Message>;

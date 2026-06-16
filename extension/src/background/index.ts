@@ -3,10 +3,16 @@ import {
   appendTranscript,
   createSession,
   finalizeSession,
+  getAllSessions,
+  getSession,
   getSettings,
   pruneOldSessions,
+  saveSummary,
 } from '../lib/db';
 import { detectMeeting, type Platform } from '../lib/meeting';
+import { summarise } from '../lib/groq';
+
+const GROQ_ORIGIN = 'https://api.groq.com/*';
 
 const SCRIPT_ID = 'breathe-content';
 const OFFSCREEN_URL = 'src/offscreen/index.html';
@@ -141,6 +147,40 @@ async function pruneOnStartup(): Promise<void> {
   await pruneOldSessions(settings.retentionDays, Date.now());
 }
 
+/**
+ * Summarise a session via Groq (the only outbound call). Defaults to the most
+ * recent session — i.e. the one just recorded. Saves the markdown to the session
+ * and relays it to the panel; surfaces typed errors so the panel can show a CTA.
+ */
+async function handleSummarise(tabId: number, sessionId: string | undefined): Promise<void> {
+  const send = (state: 'loading' | 'done' | 'error', extra: Partial<Message> = {}) =>
+    void chrome.tabs.sendMessage(tabId, { type: 'SUMMARY_STATUS', state, ...extra } as Message);
+
+  send('loading');
+
+  if (!(await chrome.permissions.contains({ origins: [GROQ_ORIGIN] }))) {
+    send('error', { error: 'permission' });
+    return;
+  }
+
+  const settings = await getSettings();
+  const session = sessionId
+    ? await getSession(sessionId)
+    : (await getAllSessions())[0];
+  if (!session || !session.transcript.trim()) {
+    send('error', { error: 'empty' });
+    return;
+  }
+
+  const result = await summarise(session.transcript, settings.groqApiKey, settings.model);
+  if (result.ok) {
+    await saveSummary(session.id, result.markdown);
+    send('done', { markdown: result.markdown });
+  } else {
+    send('error', { error: result.error });
+  }
+}
+
 chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   const parsed = Message.safeParse(raw);
   if (!parsed.success) return;
@@ -214,6 +254,22 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       void chrome.tabs.sendMessage(message.tabId, relay);
       return;
     }
+
+    case 'SUMMARISE': {
+      const tabId = sender.tab?.id;
+      if (tabId !== undefined) {
+        handleSummarise(tabId, message.sessionId).catch((error: unknown) => {
+          console.error('Breathe: summarise failed', error);
+          const relay: Message = { type: 'SUMMARY_STATUS', state: 'error', error: 'network' };
+          void chrome.tabs.sendMessage(tabId, relay);
+        });
+      }
+      return;
+    }
+
+    case 'OPEN_OPTIONS':
+      void chrome.runtime.openOptionsPage();
+      return;
   }
 });
 

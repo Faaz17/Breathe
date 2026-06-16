@@ -1,5 +1,6 @@
-import type { SttState } from '../../lib/messages';
+import type { SttState, SummaryError } from '../../lib/messages';
 import { Transcript } from './Transcript';
+import { SummaryView } from './SummaryView';
 import { VuMeter } from './VuMeter';
 
 interface SidePanelProps {
@@ -8,8 +9,13 @@ interface SidePanelProps {
   sttState: SttState | 'idle';
   sttProgress: number;
   sttMessage: string;
+  summaryState: 'idle' | 'loading' | 'done' | 'error';
+  summaryMarkdown: string;
+  summaryError: SummaryError | '';
   onStop: () => void;
   onCollapse: () => void;
+  onSummarise: () => void;
+  onOpenOptions: () => void;
 }
 
 export function SidePanel({
@@ -18,9 +24,15 @@ export function SidePanel({
   sttState,
   sttProgress,
   sttMessage,
+  summaryState,
+  summaryMarkdown,
+  summaryError,
   onStop,
   onCollapse,
+  onSummarise,
+  onOpenOptions,
 }: SidePanelProps) {
+  const canSummarise = transcript.trim() !== '' && summaryState !== 'loading';
   return (
     <section
       aria-label="Breathe meeting notes"
@@ -94,13 +106,21 @@ export function SidePanel({
         </p>
       )}
 
+      <SummaryView
+        state={summaryState}
+        markdown={summaryMarkdown}
+        error={summaryError}
+        onOpenOptions={onOpenOptions}
+      />
+
       <div className="flex items-center justify-between border-t border-zinc-800 pt-2">
         <button
           type="button"
-          disabled
-          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm text-zinc-600 disabled:cursor-not-allowed"
+          onClick={onSummarise}
+          disabled={!canSummarise}
+          className="rounded-lg bg-zinc-800 px-3 py-1.5 text-sm font-medium text-zinc-100 transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:cursor-not-allowed disabled:bg-zinc-900 disabled:text-zinc-600"
         >
-          Summarise
+          {summaryState === 'loading' ? 'Summarising…' : 'Summarise'}
         </button>
         <span className="font-mono text-xs text-zinc-500">00:00:00</span>
       </div>

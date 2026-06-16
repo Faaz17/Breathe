@@ -113,6 +113,17 @@ export async function appendTranscript(id: string, text: string): Promise<void> 
   await tx.done;
 }
 
+export async function saveSummary(id: string, summary: string): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction('sessions', 'readwrite');
+  const session = await tx.store.get(id);
+  if (session) {
+    session.summary = summary;
+    await tx.store.put(session);
+  }
+  await tx.done;
+}
+
 export async function finalizeSession(id: string, endedAt: number): Promise<void> {
   const db = await getDb();
   const tx = db.transaction('sessions', 'readwrite');

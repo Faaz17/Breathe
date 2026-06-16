@@ -53,6 +53,13 @@ chrome.runtime.onMessage.addListener((raw) => {
     case 'STT_STATUS':
       capture.setSttStatus(parsed.data.state, parsed.data.progress, parsed.data.message);
       return;
+    case 'SUMMARY_STATUS':
+      capture.setSummaryStatus(
+        parsed.data.state,
+        parsed.data.markdown ?? '',
+        parsed.data.error ?? '',
+      );
+      return;
   }
 });
 

@@ -1,7 +1,8 @@
-import type { SttState } from '../lib/messages';
+import type { SttState, SummaryError } from '../lib/messages';
 
 type Listener = () => void;
 type PanelSttState = SttState | 'idle';
+type PanelSummaryState = 'idle' | 'loading' | 'done' | 'error';
 
 /**
  * Passive store of capture state for the panel. The offscreen document does the
@@ -16,6 +17,9 @@ class CaptureStore {
   private sttState: PanelSttState = 'idle';
   private sttProgress = 0;
   private sttMessage = '';
+  private summaryState: PanelSummaryState = 'idle';
+  private summaryMarkdown = '';
+  private summaryError: SummaryError | '' = '';
   private readonly listeners = new Set<Listener>();
 
   setLevel(level: number): void {
@@ -31,8 +35,22 @@ class CaptureStore {
       this.sttState = 'idle';
       this.sttProgress = 0;
       this.sttMessage = '';
+      this.summaryState = 'idle';
+      this.summaryMarkdown = '';
+      this.summaryError = '';
     }
     this.recording = recording;
+    this.emit();
+  }
+
+  setSummaryStatus(
+    state: PanelSummaryState,
+    markdown = '',
+    error: SummaryError | '' = '',
+  ): void {
+    this.summaryState = state;
+    this.summaryMarkdown = markdown;
+    this.summaryError = error;
     this.emit();
   }
 
@@ -73,6 +91,18 @@ class CaptureStore {
 
   getSttMessage(): string {
     return this.sttMessage;
+  }
+
+  getSummaryState(): PanelSummaryState {
+    return this.summaryState;
+  }
+
+  getSummaryMarkdown(): string {
+    return this.summaryMarkdown;
+  }
+
+  getSummaryError(): SummaryError | '' {
+    return this.summaryError;
   }
 
   subscribe(listener: Listener): () => void {

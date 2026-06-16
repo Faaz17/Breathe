@@ -34,6 +34,10 @@ export default defineManifest({
       128: 'icons/icon-128.png',
     },
   },
+  options_ui: {
+    page: 'src/options/index.html',
+    open_in_tab: true,
+  },
   background: {
     service_worker: 'src/background/index.ts',
     type: 'module',
@@ -55,9 +59,12 @@ export default defineManifest({
   // HF model files redirect from huggingface.co to its Xet storage backend
   // (cas-bridge.xethub.hf.co). Both *.hf.co and the explicit *.xethub.hf.co are
   // listed so it matches regardless of how strictly Chrome treats wildcard depth.
-  // *.huggingface.co keeps the older cdn-lfs hosts.
+  // *.huggingface.co keeps the older cdn-lfs hosts. api.groq.com is the summarise
+  // call — note that declaring connect-src at all restricts the service worker too,
+  // so every fetched origin (incl. Groq) must be listed here, not just in
+  // optional_host_permissions.
   content_security_policy: {
     extension_pages:
-      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' data: blob: https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co;",
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' data: blob: https://huggingface.co https://*.huggingface.co https://*.hf.co https://*.xethub.hf.co https://api.groq.com;",
   },
 });

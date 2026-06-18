@@ -140,6 +140,11 @@ export async function getSession(id: string): Promise<Session | undefined> {
   return db.get('sessions', id);
 }
 
+export async function deleteSession(id: string): Promise<void> {
+  const db = await getDb();
+  await db.delete('sessions', id);
+}
+
 /** All sessions, most recent first. */
 export async function getAllSessions(): Promise<Session[]> {
   const db = await getDb();

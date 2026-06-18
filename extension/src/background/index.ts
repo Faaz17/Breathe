@@ -234,6 +234,19 @@ async function handleSummarise(tabId: number, sessionId: string | undefined): Pr
   }
 }
 
+/**
+ * After an explicit Stop, optionally fire one Groq summarise for the just-finished
+ * session — but only when the user opted in AND it's actually configured (API key +
+ * host permission). Stays silent otherwise; summarising is never forced on a user
+ * who hasn't set it up, and tab-teardown stops (onRemoved/onUpdated) never reach here.
+ */
+async function autoSummariseIfEnabled(tabId: number): Promise<void> {
+  const settings = await getSettings();
+  if (!settings.autoSummariseOnStop || !settings.groqApiKey.trim()) return;
+  if (!(await chrome.permissions.contains({ origins: [GROQ_ORIGIN] }))) return;
+  await handleSummarise(tabId, undefined);
+}
+
 chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
   const parsed = Message.safeParse(raw);
   if (!parsed.success) return;
@@ -257,9 +270,11 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
       const senderTabId = sender.tab?.id;
       const stopTab = senderTabId ?? recordingTabId;
       const finish = (tabId: number) =>
-        stopRecording(tabId).catch((error: unknown) => {
-          console.error('Breathe: could not stop recording', error);
-        });
+        stopRecording(tabId)
+          .then(() => autoSummariseIfEnabled(tabId))
+          .catch((error: unknown) => {
+            console.error('Breathe: could not stop recording', error);
+          });
       if (stopTab !== null && stopTab !== undefined) {
         void finish(stopTab);
       } else {

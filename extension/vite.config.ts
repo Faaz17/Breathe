@@ -23,10 +23,12 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
-      // The offscreen document isn't referenced from the manifest (the service
-      // worker opens it via chrome.offscreen), so register it as an extra entry.
+      // Pages not referenced from the manifest need to be registered as extra
+      // entries: the offscreen document (opened via chrome.offscreen) and the
+      // history page (opened in a tab via chrome.tabs.create / getURL).
       input: {
         offscreen: 'src/offscreen/index.html',
+        history: 'src/history/index.html',
       },
     },
   },

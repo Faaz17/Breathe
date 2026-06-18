@@ -11,9 +11,14 @@ const MODELS = [
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'permission-denied' | 'error';
 
+const MIN_RETENTION_DAYS = 1;
+const MAX_RETENTION_DAYS = 365;
+
 export function Options() {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState(DEFAULT_SETTINGS.model);
+  const [retentionDays, setRetentionDays] = useState(String(DEFAULT_SETTINGS.retentionDays));
+  const [autoSummarise, setAutoSummarise] = useState(DEFAULT_SETTINGS.autoSummariseOnStop);
   const [saveState, setSaveState] = useState<SaveState>('idle');
 
   // Load the singleton settings row once on mount.
@@ -23,6 +28,8 @@ export function Options() {
       if (!active) return;
       setApiKey(settings.groqApiKey);
       setModel(settings.model);
+      setRetentionDays(String(settings.retentionDays));
+      setAutoSummarise(settings.autoSummariseOnStop);
     });
     return () => {
       active = false;
@@ -31,8 +38,18 @@ export function Options() {
 
   async function save(): Promise<void> {
     setSaveState('saving');
+    const days = Math.max(
+      MIN_RETENTION_DAYS,
+      Math.min(MAX_RETENTION_DAYS, Math.round(Number(retentionDays) || DEFAULT_SETTINGS.retentionDays)),
+    );
+    setRetentionDays(String(days)); // reflect any clamping back into the field
     try {
-      await saveSettings({ groqApiKey: apiKey.trim(), model });
+      await saveSettings({
+        groqApiKey: apiKey.trim(),
+        model,
+        retentionDays: days,
+        autoSummariseOnStop: autoSummarise,
+      });
       // Summaries fetch api.groq.com from the service worker, which needs the
       // optional host permission — requestable only from a user gesture (this click).
       const granted = await chrome.permissions.request({ origins: [GROQ_ORIGIN] });
@@ -107,6 +124,49 @@ export function Options() {
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="retention-days" className="text-sm font-medium text-zinc-200">
+            Keep notes for
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              id="retention-days"
+              type="number"
+              min={MIN_RETENTION_DAYS}
+              max={MAX_RETENTION_DAYS}
+              value={retentionDays}
+              onChange={(event) => {
+                setRetentionDays(event.target.value);
+                setSaveState('idle');
+              }}
+              className="w-24 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            />
+            <span className="text-sm text-zinc-400">days</span>
+          </div>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Sessions older than this are removed automatically when the extension starts. Default 30.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="flex items-start gap-2 text-sm font-medium text-zinc-200">
+            <input
+              type="checkbox"
+              checked={autoSummarise}
+              onChange={(event) => {
+                setAutoSummarise(event.target.checked);
+                setSaveState('idle');
+              }}
+              className="mt-0.5 h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            />
+            Summarise automatically when I stop recording
+          </label>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Off by default — summarising stays a deliberate action. When on, stopping a recording makes
+            one Groq call (needs your API key) to generate notes.
+          </p>
         </div>
 
         <div className="flex items-center gap-3">

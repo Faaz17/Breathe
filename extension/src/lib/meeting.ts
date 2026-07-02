@@ -35,3 +35,17 @@ export function detectMeeting(url: URL): MeetingInfo | null {
 
   return null;
 }
+
+/**
+ * True when the string is a URL detectMeeting recognises as a live meeting.
+ * Without the `tabs` permission, tab URLs are only visible on our permitted
+ * meeting hosts — so an undefined URL reliably means "not on a meeting page".
+ */
+export function isMeetingUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return detectMeeting(new URL(url)) !== null;
+  } catch {
+    return false;
+  }
+}

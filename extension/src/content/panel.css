@@ -26,3 +26,16 @@
     animation: breathe-in 200ms ease-out both;
   }
 }
+
+/* The shadow root has its own stylesheet, so the global reduced-motion guard in
+   styles/global.css doesn't reach it — repeat it here for the panel's transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

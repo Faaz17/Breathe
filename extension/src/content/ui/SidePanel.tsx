@@ -1,10 +1,13 @@
-import type { SttState, SummaryError } from '../../lib/messages';
+import type { StopReason, SttState, SummaryError } from '../../lib/messages';
+import type { NotifyResult } from '../notifyChat';
+import { ConsentBanner } from './ConsentBanner';
 import { Transcript } from './Transcript';
 import { SummaryView } from './SummaryView';
 import { VuMeter } from './VuMeter';
 
 interface SidePanelProps {
   recording: boolean;
+  stopReason: StopReason | '';
   transcript: string;
   sttState: SttState | 'idle';
   sttProgress: number;
@@ -12,6 +15,10 @@ interface SidePanelProps {
   summaryState: 'idle' | 'loading' | 'done' | 'error';
   summaryMarkdown: string;
   summaryError: SummaryError | '';
+  showConsent: boolean;
+  notifyState: 'idle' | 'pending' | NotifyResult;
+  onNotify: () => void;
+  onDismissConsent: () => void;
   onStop: () => void;
   onCollapse: () => void;
   onSummarise: () => void;
@@ -20,6 +27,7 @@ interface SidePanelProps {
 
 export function SidePanel({
   recording,
+  stopReason,
   transcript,
   sttState,
   sttProgress,
@@ -27,6 +35,10 @@ export function SidePanel({
   summaryState,
   summaryMarkdown,
   summaryError,
+  showConsent,
+  notifyState,
+  onNotify,
+  onDismissConsent,
   onStop,
   onCollapse,
   onSummarise,
@@ -35,6 +47,9 @@ export function SidePanel({
   // Only after Stop (per the design): summarising a still-growing transcript would
   // spend a Groq call on partial, immediately-stale notes.
   const canSummarise = !recording && transcript.trim() !== '' && summaryState !== 'loading';
+  // Only unexpected stops warrant a notice — user stops and tab teardowns don't.
+  const interrupted =
+    !recording && (stopReason === 'capture-lost' || stopReason === 'error');
   return (
     <section
       aria-label="Breathe meeting notes"
@@ -79,6 +94,25 @@ export function SidePanel({
           </svg>
         </button>
       </header>
+
+      {showConsent && (
+        <ConsentBanner
+          notifyState={notifyState}
+          onNotify={onNotify}
+          onDismiss={onDismissConsent}
+        />
+      )}
+
+      {interrupted && (
+        <p
+          role="status"
+          className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-400 ring-1 ring-amber-500/30"
+        >
+          Recording was interrupted — click the Breathe icon in the toolbar to
+          start again. Your notes so far are saved and will continue in the
+          same session.
+        </p>
+      )}
 
       {recording && (
         <>

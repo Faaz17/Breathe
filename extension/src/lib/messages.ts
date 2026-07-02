@@ -12,6 +12,19 @@ import { z } from 'zod';
 export const SttState = z.enum(['loading', 'ready', 'error']);
 export type SttState = z.infer<typeof SttState>;
 
+/**
+ * Why a recording stopped. Only `capture-lost`/`error` surface a notice in the
+ * panel — the others are either user-initiated or leave no panel to notify.
+ */
+export const StopReason = z.enum([
+  'user', // explicit Stop click (panel or popup)
+  'tab-closed', // meeting tab was closed
+  'navigated', // meeting tab left the meeting URL
+  'capture-lost', // Chrome ended the capture and auto-resume failed
+  'error', // unexpected internal failure
+]);
+export type StopReason = z.infer<typeof StopReason>;
+
 /** Why a Groq summarise attempt failed (drives the panel's message + CTA). */
 export const SummaryError = z.enum([
   'no-key', // user hasn't set an API key
@@ -27,7 +40,8 @@ export type SummaryError = z.infer<typeof SummaryError>;
 export const Message = z.discriminatedUnion('type', [
   // popup → service worker
   z.object({ type: z.literal('START_RECORDING'), tabId: z.number() }),
-  z.object({ type: z.literal('GET_STATE'), tabId: z.number() }),
+  // popup sends its tabId; the content script omits it (the SW uses sender.tab.id)
+  z.object({ type: z.literal('GET_STATE'), tabId: z.number().optional() }),
   // panel (content script) → service worker
   z.object({ type: z.literal('STOP_RECORDING') }),
   z.object({ type: z.literal('SUMMARISE'), sessionId: z.string().optional() }),
@@ -35,9 +49,24 @@ export const Message = z.discriminatedUnion('type', [
   // service worker → offscreen document
   z.object({ type: z.literal('OFFSCREEN_START'), streamId: z.string(), tabId: z.number() }),
   z.object({ type: z.literal('OFFSCREEN_STOP') }),
+  // Health check: the offscreen doc replies with PingReply via sendResponse.
+  z.object({ type: z.literal('OFFSCREEN_PING') }),
   // offscreen document → service worker
   z.object({ type: z.literal('VU_LEVEL'), tabId: z.number(), level: z.number() }),
   z.object({ type: z.literal('TRANSCRIPT_CHUNK'), tabId: z.number(), text: z.string() }),
+  // Chrome ended the capture stream out from under us (tab teardown, media
+  // process death) — the SW decides whether to auto-resume or stop cleanly.
+  z.object({
+    type: z.literal('CAPTURE_LOST'),
+    tabId: z.number(),
+    detail: z.enum(['track-ended', 'stream-inactive', 'no-track']),
+  }),
+  // Offscreen diagnostics, written to the ring buffer by the SW (single writer).
+  z.object({
+    type: z.literal('DIAG'),
+    event: z.string(),
+    detail: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  }),
   z.object({
     type: z.literal('TRANSCRIBE_STATUS'),
     tabId: z.number(),
@@ -47,7 +76,12 @@ export const Message = z.discriminatedUnion('type', [
   }),
   // service worker → content script
   z.object({ type: z.literal('VU'), level: z.number() }),
-  z.object({ type: z.literal('RECORDING'), recording: z.boolean() }),
+  z.object({
+    type: z.literal('RECORDING'),
+    recording: z.boolean(),
+    // Present on stops so the panel can tell a user Stop from an unexpected one.
+    reason: StopReason.optional(),
+  }),
   z.object({ type: z.literal('TRANSCRIPT'), text: z.string() }),
   z.object({
     type: z.literal('STT_STATUS'),
@@ -64,9 +98,21 @@ export const Message = z.discriminatedUnion('type', [
 ]);
 export type Message = z.infer<typeof Message>;
 
-/** Response to GET_STATE (service worker → popup). */
-export const RecordingState = z.object({ recording: z.boolean() });
+/**
+ * Response to GET_STATE (service worker → popup/panel). transcript/summary are
+ * the tab's active-or-last session, letting a remounted panel rehydrate after
+ * a mid-meeting reload instead of showing a blank, dead-looking state.
+ */
+export const RecordingState = z.object({
+  recording: z.boolean(),
+  transcript: z.string().optional(),
+  summary: z.string().optional(),
+});
 export type RecordingState = z.infer<typeof RecordingState>;
+
+/** Response to OFFSCREEN_PING (offscreen → service worker). */
+export const PingReply = z.object({ capturing: z.boolean() });
+export type PingReply = z.infer<typeof PingReply>;
 
 /** Response to START_RECORDING (service worker → popup). */
 export const Ack = z.object({ ok: z.boolean() });

@@ -22,11 +22,23 @@ export const Session = z.object({
 });
 export type Session = z.infer<typeof Session>;
 
+/** Local Whisper models the worker can load (fp32 only — see whisper.worker.ts). */
+export const TRANSCRIPTION_MODELS = [
+  'Xenova/whisper-small.en',
+  'Xenova/whisper-base.en',
+] as const;
+
+// Every field carries a default so a stored row from an older version (missing
+// newly-added keys) still parses — without them, getSettings' wholesale
+// safeParse fallback would silently wipe the user's saved Groq key.
 export const Settings = z.object({
-  groqApiKey: z.string(),
-  model: z.string(),
-  retentionDays: z.number(),
-  autoSummariseOnStop: z.boolean(),
+  groqApiKey: z.string().default(''),
+  model: z.string().default('llama-3.1-8b-instant'),
+  retentionDays: z.number().default(30),
+  autoSummariseOnStop: z.boolean().default(false),
+  // .catch(): a missing OR retired stored model id heals to the default.
+  transcriptionModel: z.enum(TRANSCRIPTION_MODELS).catch('Xenova/whisper-small.en'),
+  captureMicrophone: z.boolean().default(true),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -35,6 +47,8 @@ export const DEFAULT_SETTINGS: Settings = {
   model: 'llama-3.1-8b-instant',
   retentionDays: 30,
   autoSummariseOnStop: false,
+  transcriptionModel: 'Xenova/whisper-small.en',
+  captureMicrophone: true,
 };
 
 const DB_NAME = 'breathe';
@@ -130,6 +144,22 @@ export async function finalizeSession(id: string, endedAt: number): Promise<void
   const session = await tx.store.get(id);
   if (session) {
     session.endedAt = endedAt;
+    await tx.store.put(session);
+  }
+  await tx.done;
+}
+
+/**
+ * Reopens a finalized session so a restart shortly after an unexpected stop
+ * (capture lost, meeting reload) keeps appending to the same notes instead of
+ * fragmenting one meeting across several history entries.
+ */
+export async function reopenSession(id: string): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction('sessions', 'readwrite');
+  const session = await tx.store.get(id);
+  if (session) {
+    session.endedAt = null;
     await tx.store.put(session);
   }
   await tx.done;

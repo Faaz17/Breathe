@@ -1,4 +1,4 @@
-import type { SttState, SummaryError } from '../lib/messages';
+import type { StopReason, SttState, SummaryError } from '../lib/messages';
 
 type Listener = () => void;
 type PanelSttState = SttState | 'idle';
@@ -13,6 +13,7 @@ type PanelSummaryState = 'idle' | 'loading' | 'done' | 'error';
 class CaptureStore {
   private level = 0;
   private recording = false;
+  private stopReason: StopReason | '' = '';
   private transcript = '';
   private sttState: PanelSttState = 'idle';
   private sttProgress = 0;
@@ -26,7 +27,7 @@ class CaptureStore {
     this.level = level;
   }
 
-  setRecording(recording: boolean): void {
+  setRecording(recording: boolean, reason: StopReason | '' = ''): void {
     if (recording === this.recording) return;
     // A fresh recording starts with a clean transcript; a stopped one stays
     // readable until the next session begins.
@@ -39,7 +40,26 @@ class CaptureStore {
       this.summaryMarkdown = '';
       this.summaryError = '';
     }
+    this.stopReason = recording ? '' : reason;
     this.recording = recording;
+    this.emit();
+  }
+
+  /**
+   * Seed state from the service worker's GET_STATE on mount, so a panel that
+   * remounts mid- or post-recording (Meet reload) doesn't look dead. Never
+   * downgrades: live messages that raced ahead of the response win.
+   */
+  hydrate(recording: boolean, transcript: string, summary: string): void {
+    if (this.recording && !recording) return;
+    this.recording = this.recording || recording;
+    // The persisted transcript includes anything already relayed live; only a
+    // pending-write race could make it shorter, and then the live text wins.
+    if (transcript.length > this.transcript.length) this.transcript = transcript;
+    if (summary && this.summaryState === 'idle') {
+      this.summaryState = 'done';
+      this.summaryMarkdown = summary;
+    }
     this.emit();
   }
 
@@ -75,6 +95,10 @@ class CaptureStore {
 
   isRecording(): boolean {
     return this.recording;
+  }
+
+  getStopReason(): StopReason | '' {
+    return this.stopReason;
   }
 
   getTranscript(): string {

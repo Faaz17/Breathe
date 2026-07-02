@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 
-import { DEFAULT_SETTINGS, getSettings, saveSettings } from '../lib/db';
+import {
+  DEFAULT_SETTINGS,
+  getSettings,
+  saveSettings,
+  TRANSCRIPTION_MODELS,
+  type Settings,
+} from '../lib/db';
 
 const GROQ_ORIGIN = 'https://api.groq.com/*';
 
@@ -9,7 +15,20 @@ const MODELS = [
   { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile — higher quality' },
 ];
 
-type SaveState = 'idle' | 'saving' | 'saved' | 'permission-denied' | 'error';
+const TRANSCRIPTION_MODEL_OPTIONS: { id: Settings['transcriptionModel']; label: string }[] = [
+  {
+    id: 'Xenova/whisper-small.en',
+    label: 'Whisper Small (English) — best accuracy, ~970 MB one-time download',
+  },
+  {
+    id: 'Xenova/whisper-base.en',
+    label: 'Whisper Base (English) — lighter, ~290 MB download',
+  },
+];
+
+type SaveState = 'idle' | 'saving' | 'saved' | 'permission-denied' | 'mic-denied' | 'error';
+
+type MicPermission = 'granted' | 'denied' | 'prompt' | 'unknown';
 
 const MIN_RETENTION_DAYS = 1;
 const MAX_RETENTION_DAYS = 365;
@@ -17,6 +36,11 @@ const MAX_RETENTION_DAYS = 365;
 export function Options() {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState(DEFAULT_SETTINGS.model);
+  const [transcriptionModel, setTranscriptionModel] = useState<Settings['transcriptionModel']>(
+    DEFAULT_SETTINGS.transcriptionModel,
+  );
+  const [captureMic, setCaptureMic] = useState(DEFAULT_SETTINGS.captureMicrophone);
+  const [micPermission, setMicPermission] = useState<MicPermission>('unknown');
   const [retentionDays, setRetentionDays] = useState(String(DEFAULT_SETTINGS.retentionDays));
   const [autoSummarise, setAutoSummarise] = useState(DEFAULT_SETTINGS.autoSummariseOnStop);
   const [saveState, setSaveState] = useState<SaveState>('idle');
@@ -28,13 +52,50 @@ export function Options() {
       if (!active) return;
       setApiKey(settings.groqApiKey);
       setModel(settings.model);
+      setTranscriptionModel(settings.transcriptionModel);
+      setCaptureMic(settings.captureMicrophone);
       setRetentionDays(String(settings.retentionDays));
       setAutoSummarise(settings.autoSummariseOnStop);
     });
+    // Track the extension's mic permission live (updates if the user flips the
+    // address-bar padlock setting while this page is open).
+    void navigator.permissions
+      .query({ name: 'microphone' as PermissionName })
+      .then((status) => {
+        if (!active) return;
+        setMicPermission(status.state);
+        status.onchange = () => setMicPermission(status.state);
+      })
+      .catch(() => {
+        if (active) setMicPermission('unknown');
+      });
     return () => {
       active = false;
     };
   }, []);
+
+  /**
+   * The offscreen document that records meetings cannot show a permission
+   * prompt — the grant must happen on a visible page like this one. We only
+   * want the grant, not the stream, so tracks stop immediately.
+   */
+  async function requestMicAccess(): Promise<boolean> {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setMicPermission('granted');
+      return true;
+    } catch {
+      setMicPermission('denied');
+      return false;
+    }
+  }
+
+  function handleMicToggle(checked: boolean): void {
+    setCaptureMic(checked);
+    setSaveState('idle');
+    if (checked && micPermission !== 'granted') void requestMicAccess();
+  }
 
   async function save(): Promise<void> {
     setSaveState('saving');
@@ -47,13 +108,16 @@ export function Options() {
       await saveSettings({
         groqApiKey: apiKey.trim(),
         model,
+        transcriptionModel,
+        captureMicrophone: captureMic,
         retentionDays: days,
         autoSummariseOnStop: autoSummarise,
       });
+      const micOk = !captureMic || micPermission === 'granted' || (await requestMicAccess());
       // Summaries fetch api.groq.com from the service worker, which needs the
       // optional host permission — requestable only from a user gesture (this click).
       const granted = await chrome.permissions.request({ origins: [GROQ_ORIGIN] });
-      setSaveState(granted ? 'saved' : 'permission-denied');
+      setSaveState(granted ? (micOk ? 'saved' : 'mic-denied') : 'permission-denied');
     } catch {
       setSaveState('error');
     }
@@ -127,6 +191,52 @@ export function Options() {
         </div>
 
         <div className="flex flex-col gap-1.5">
+          <label htmlFor="transcription-model" className="text-sm font-medium text-zinc-200">
+            Transcription model
+          </label>
+          <select
+            id="transcription-model"
+            value={transcriptionModel}
+            onChange={(event) => {
+              const next = TRANSCRIPTION_MODELS.find((id) => id === event.target.value);
+              if (next) setTranscriptionModel(next);
+              setSaveState('idle');
+            }}
+            className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+          >
+            {TRANSCRIPTION_MODEL_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Runs entirely on your machine — nothing is uploaded. Small needs your GPU; on
+            CPU-only machines Breathe automatically uses Base instead. Downloads once, then
+            works offline. Takes effect the next time you start recording.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="flex items-start gap-2 text-sm font-medium text-zinc-200">
+            <input
+              type="checkbox"
+              checked={captureMic}
+              onChange={(event) => handleMicToggle(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+            />
+            Also transcribe my microphone
+          </label>
+          {captureMic && <MicPermissionNote permission={micPermission} />}
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Tab capture only hears the other participants — turn this on so your own voice
+            makes it into the notes. Your mic is transcribed locally, exactly like the rest,
+            and never recorded or uploaded. If access is missing during a meeting, Breathe
+            records the others and shows &ldquo;mic off&rdquo;.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
           <label htmlFor="retention-days" className="text-sm font-medium text-zinc-200">
             Keep notes for
           </label>
@@ -195,8 +305,40 @@ function StatusNote({ state }: { state: SaveState }) {
       </span>
     );
   }
+  if (state === 'mic-denied') {
+    return (
+      <span role="status" className="text-sm text-amber-400">
+        Saved — but microphone access is blocked, so meetings will transcribe other
+        participants only.
+      </span>
+    );
+  }
   if (state === 'error') {
     return <span role="status" className="text-sm text-amber-400">Couldn&rsquo;t save. Try again.</span>;
   }
   return null;
+}
+
+function MicPermissionNote({ permission }: { permission: MicPermission }) {
+  if (permission === 'granted') {
+    return (
+      <p role="status" className="text-xs text-emerald-400">
+        Microphone access allowed.
+      </p>
+    );
+  }
+  if (permission === 'denied') {
+    return (
+      <p role="status" className="text-xs leading-relaxed text-amber-400">
+        Microphone access is blocked for Breathe. Click the mic icon in this page&rsquo;s
+        address bar (or Chrome Settings → Privacy → Microphone) to allow it, then toggle
+        again.
+      </p>
+    );
+  }
+  return (
+    <p role="status" className="text-xs text-zinc-500">
+      Chrome will ask for microphone access when you enable this.
+    </p>
+  );
 }

@@ -1,4 +1,4 @@
-import { Message } from '../lib/messages';
+import { Message, RecordingState } from '../lib/messages';
 import { detectMeeting } from '../lib/meeting';
 import { capture } from './capture';
 import { mountPanel, type PanelHandle } from './mount';
@@ -45,7 +45,7 @@ chrome.runtime.onMessage.addListener((raw) => {
       capture.setLevel(parsed.data.level);
       return;
     case 'RECORDING':
-      capture.setRecording(parsed.data.recording);
+      capture.setRecording(parsed.data.recording, parsed.data.reason ?? '');
       return;
     case 'TRANSCRIPT':
       capture.appendTranscript(parsed.data.text);
@@ -63,6 +63,29 @@ chrome.runtime.onMessage.addListener((raw) => {
   }
 });
 
+/**
+ * A freshly (re)mounted panel knows nothing — if this tab is mid-recording
+ * (Meet reloaded the page) or just finished a session, pull the state from the
+ * service worker so the panel shows the live transcript and Summarise works.
+ */
+function hydrateFromBackground(): void {
+  const message: Message = { type: 'GET_STATE' };
+  chrome.runtime
+    .sendMessage(message)
+    .then((raw: unknown) => {
+      const parsed = RecordingState.safeParse(raw);
+      if (!parsed.success) return;
+      capture.hydrate(
+        parsed.data.recording,
+        parsed.data.transcript ?? '',
+        parsed.data.summary ?? '',
+      );
+    })
+    .catch(() => {
+      // Service worker unavailable; live messages will catch the panel up.
+    });
+}
+
 watchSpaNavigation(sync);
 
 window.addEventListener('pagehide', () => {
@@ -71,3 +94,4 @@ window.addEventListener('pagehide', () => {
 });
 
 sync();
+hydrateFromBackground();

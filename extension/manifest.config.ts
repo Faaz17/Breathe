@@ -42,7 +42,9 @@ export default defineManifest({
     service_worker: 'src/background/index.ts',
     type: 'module',
   },
-  permissions: ['tabCapture', 'storage', 'activeTab', 'scripting', 'offscreen'],
+  // alarms powers the recording watchdog (offscreen-health check every 30s while
+  // recording) — a silent permission, no install-time warning.
+  permissions: ['tabCapture', 'storage', 'activeTab', 'scripting', 'offscreen', 'alarms'],
   host_permissions: [
     '*://meet.google.com/*',
     '*://*.zoom.us/wc/*',

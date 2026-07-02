@@ -111,6 +111,17 @@ async function getResumeAttempts(): Promise<number> {
   return typeof resumeAttempts === 'number' ? resumeAttempts : 0;
 }
 
+/**
+ * The meeting's own mute state, persisted so it survives offscreen-document
+ * restarts (auto-resume) and SW sleeps. Without this, a resume would silently
+ * re-enable a mic the user muted in the meeting — the offscreen doc resets its
+ * copy on every restart, and the content script only re-sends on change.
+ */
+async function getStoredMicMuted(): Promise<boolean> {
+  const { meetingMicMuted } = await chrome.storage.session.get('meetingMicMuted');
+  return meetingMicMuted === true;
+}
+
 let lastHeartbeatWrite = 0;
 
 /**
@@ -239,7 +250,12 @@ async function startRecording(tabId: number): Promise<void> {
     }));
 
   await ensureOffscreen();
-  const start: Message = { type: 'OFFSCREEN_START', streamId, tabId };
+  const start: Message = {
+    type: 'OFFSCREEN_START',
+    streamId,
+    tabId,
+    micMuted: await getStoredMicMuted(),
+  };
   await chrome.runtime.sendMessage(start);
 
   recordingTabId = tabId;
@@ -274,6 +290,7 @@ async function stopRecording(tabId: number, reason: StopReason): Promise<void> {
   const active = await getActiveSession();
   if (active) await finalizeSession(active.sessionId, Date.now());
   await setActiveSession(null);
+  await chrome.storage.session.remove('meetingMicMuted');
 
   recordingTabId = null;
   relayToTab(tabId, { type: 'RECORDING', recording: false, reason });
@@ -285,7 +302,14 @@ async function resumeCapture(tabId: number): Promise<boolean> {
   try {
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
     await ensureOffscreen();
-    const start: Message = { type: 'OFFSCREEN_START', streamId, tabId };
+    const start: Message = {
+      type: 'OFFSCREEN_START',
+      streamId,
+      tabId,
+      // Re-apply the persisted meeting-mute state: the restarted offscreen doc
+      // starts fresh and would otherwise transcribe a still-muted user.
+      micMuted: await getStoredMicMuted(),
+    };
     await chrome.runtime.sendMessage(start);
     recordingTabId = tabId;
     relayToTab(tabId, { type: 'RECORDING', recording: true });
@@ -558,6 +582,24 @@ chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
     case 'CAPTURE_LOST':
       void handleCaptureLost(message.tabId, message.detail);
       return;
+
+    case 'MEETING_MIC_STATE': {
+      // Only the recorded tab's mute state matters; forward it to the
+      // offscreen document so the mic track mirrors the meeting's mute.
+      const senderTab = sender.tab?.id;
+      if (senderTab === undefined) return;
+      void getActiveSession().then((active) => {
+        if (active?.tabId !== senderTab) return;
+        diag('sw', 'meeting-mic-state', { muted: message.muted });
+        // Persist first: OFFSCREEN_START re-applies this after any restart.
+        void chrome.storage.session.set({ meetingMicMuted: message.muted });
+        const forward: Message = { type: 'OFFSCREEN_MIC_STATE', muted: message.muted };
+        void chrome.runtime.sendMessage(forward).catch(() => {
+          // Offscreen document not up yet; OFFSCREEN_START carries the state.
+        });
+      });
+      return;
+    }
 
     case 'DIAG':
       diag('off', message.event, message.detail);

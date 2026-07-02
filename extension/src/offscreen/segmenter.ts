@@ -27,6 +27,12 @@ const PRE_ROLL_FRAMES = 13;
 // ~704 ms of continuous sub-EXIT audio ends a segment: stop-consonant closures
 // (50–150 ms) and comma pauses (200–500 ms) stay inside; sentence gaps end it.
 const HANG_FRAMES = 22;
+// Latency: once a segment already holds ~5 s of audio it has plenty of context,
+// so a shorter (~512 ms) pause is enough to cut — flowing speech otherwise
+// waits the full hangover every time, or worse, the 12 s cap. 512 ms sits just
+// past the 200–500 ms comma-pause band, so clauses still stay intact.
+const SOFT_HANG_AFTER_FRAMES = 156;
+const SOFT_HANG_FRAMES = 16;
 // ~192 ms of that trailing silence is kept on the emitted segment as padding.
 const TRAIL_PAD_FRAMES = 6;
 // Noise gate: ≥ ~288 ms of above-ENTER audio required to emit at all.
@@ -146,7 +152,9 @@ export class Segmenter {
 
     if (level < EXIT_RMS) {
       this.silenceRun += 1;
-      if (this.silenceRun >= HANG_FRAMES) {
+      const hang =
+        this.frames.length >= SOFT_HANG_AFTER_FRAMES ? SOFT_HANG_FRAMES : HANG_FRAMES;
+      if (this.silenceRun >= hang) {
         this.endpoint();
         return;
       }
@@ -160,11 +168,13 @@ export class Segmenter {
 
   /** Natural pause: trim the hangover to a short pad, emit, recycle silence. */
   private endpoint(): void {
-    const drop = HANG_FRAMES - TRAIL_PAD_FRAMES;
+    // The hangover is adaptive, so trim from the run actually observed.
+    const drop = Math.max(0, this.silenceRun - TRAIL_PAD_FRAMES);
     const emitted = this.frames.slice(0, this.frames.length - drop);
-    const dropped = this.frames.slice(this.frames.length - drop);
-    // The dropped tail is known silence — it becomes the next onset's pre-roll.
-    this.preRoll = dropped.slice(-PRE_ROLL_FRAMES);
+    // Seed the next onset's pre-roll from the FULL trailing-silence run — it
+    // may overlap the emitted trail pad, but duplicated silence is harmless;
+    // a starved pre-roll after a short soft-hang cut would clip word onsets.
+    this.preRoll = this.frames.slice(-Math.min(this.silenceRun, PRE_ROLL_FRAMES));
 
     if (this.speechFrames >= MIN_SPEECH_FRAMES && emitted.length > 0) {
       this.emit(emitted);

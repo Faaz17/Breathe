@@ -15,22 +15,37 @@ pnpm install        # first run approves esbuild's build script via pnpm-workspa
 pnpm build          # type-checks (tsc -b) then bundles to extension/dist
 ```
 
-`pnpm dev` runs Vite with HMR for the popup/options pages. Content scripts (Phase 1+)
-need an extension reload after changes.
+`pnpm dev` runs Vite with HMR for the popup/options pages. The content script and
+service worker need a rebuild (`pnpm build`) + extension reload after changes.
+
+> **Note:** the build is two Vite passes — the content script is bundled as a
+> self-contained classic IIFE and registered at runtime via `chrome.scripting`,
+> because Google Meet's `strict-dynamic` CSP blocks the normal module loader.
+> `pnpm dev` alone does not rebuild `content.js`; use `pnpm build` to test it.
 
 ## Load the unpacked extension
 
 1. Open `chrome://extensions` (Edge: `edge://extensions`).
 2. Toggle **Developer mode** (top-right).
 3. Click **Load unpacked** and pick **`extension/dist`**.
-4. The Breathe icon (emerald square with a white dot) appears in the toolbar.
-   Click it → the popup reads **"Hello Breathe"**.
+4. The Breathe icon (emerald square) appears in the toolbar. Open a meeting tab
+   (Google Meet / Zoom web / Webex web) and the side panel injects.
 
 ### Reloading after changes
 
 - **Popup / options:** rebuild (or `pnpm dev`), then reopen the popup.
-- **Content script:** reload the extension card, then reload the meeting tab.
+- **Content script:** reload the extension card, **then reload the meeting tab**
+  (registration only injects into tabs opened after the reload).
 - **Service worker:** reload the extension card; the worker restarts.
+
+## First-run notes
+
+- The first recording downloads the Whisper model (default **small.en**, ~970 MB;
+  or **base.en**, ~290 MB, selectable in Options). Cached in the browser after.
+- Summaries need a free Groq API key (Options → paste key from
+  [console.groq.com/keys](https://console.groq.com/keys)).
+- Diagnostics: the service-worker console has a `breatheDiag()` helper that dumps
+  a ring buffer of recording lifecycle events.
 
 ## Toolchain (pinned, stable matrix)
 

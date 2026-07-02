@@ -46,11 +46,25 @@ export const Message = z.discriminatedUnion('type', [
   z.object({ type: z.literal('STOP_RECORDING') }),
   z.object({ type: z.literal('SUMMARISE'), sessionId: z.string().optional() }),
   z.object({ type: z.literal('OPEN_OPTIONS') }),
-  // service worker → offscreen document
-  z.object({ type: z.literal('OFFSCREEN_START'), streamId: z.string(), tabId: z.number() }),
+  // The meeting page's own mute state (read from its mute button by the
+  // content script). Breathe's mic capture is an independent OS stream, so
+  // without this it would keep transcribing the user while they're muted
+  // in the meeting — a privacy hole, not a feature.
+  z.object({ type: z.literal('MEETING_MIC_STATE'), muted: z.boolean() }),
+  // service worker → offscreen document. micMuted seeds the meeting-mute state
+  // on (re)start — the SW persists it, so an auto-resume can't silently
+  // re-enable a mic the user muted in the meeting.
+  z.object({
+    type: z.literal('OFFSCREEN_START'),
+    streamId: z.string(),
+    tabId: z.number(),
+    micMuted: z.boolean().optional(),
+  }),
   z.object({ type: z.literal('OFFSCREEN_STOP') }),
   // Health check: the offscreen doc replies with PingReply via sendResponse.
   z.object({ type: z.literal('OFFSCREEN_PING') }),
+  // Mirror the meeting's mute state onto Breathe's mic capture track.
+  z.object({ type: z.literal('OFFSCREEN_MIC_STATE'), muted: z.boolean() }),
   // offscreen document → service worker
   z.object({ type: z.literal('VU_LEVEL'), tabId: z.number(), level: z.number() }),
   z.object({ type: z.literal('TRANSCRIPT_CHUNK'), tabId: z.number(), text: z.string() }),

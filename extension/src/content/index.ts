@@ -1,6 +1,7 @@
 import { Message, RecordingState } from '../lib/messages';
 import { detectMeeting } from '../lib/meeting';
 import { capture } from './capture';
+import { watchMeetingMicState } from './micState';
 import { mountPanel, type PanelHandle } from './mount';
 
 let panel: PanelHandle | null = null;
@@ -87,6 +88,10 @@ function hydrateFromBackground(): void {
 }
 
 watchSpaNavigation(sync);
+
+// While recording, mirror the meeting's own mute button onto Breathe's mic
+// capture (idempotent — safe to call on every store change).
+capture.subscribe(() => watchMeetingMicState(capture.isRecording()));
 
 window.addEventListener('pagehide', () => {
   panel?.unmount();

@@ -1,7 +1,7 @@
 {
   "name": "breathe-extension",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "Breathe — privacy-first, local meeting notes browser extension (MV3).",
   "scripts": {

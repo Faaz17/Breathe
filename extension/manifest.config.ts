@@ -15,7 +15,7 @@ import { defineManifest } from '@crxjs/vite-plugin';
 export default defineManifest({
   manifest_version: 3,
   name: 'Breathe',
-  version: '0.0.0',
+  version: '0.1.0',
   description:
     'Privacy-first, local meeting notes. Captures tab audio, transcribes in-browser, summarises on demand.',
   icons: {

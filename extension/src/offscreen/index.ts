@@ -48,6 +48,18 @@ let captureLostReported = false;
 let micStream: MediaStream | null = null;
 let micActive = false;
 let micRequested = false;
+// Mirrors the meeting's own mute button (relayed from the content script):
+// muted in the meeting ⇒ Breathe must not transcribe the mic either.
+let micMeetingMuted = false;
+// Last undecorated 'ready' status, re-emitted when the mic state changes so
+// the panel's "· mic muted" suffix stays current mid-session.
+let lastReadyMessage: string | null = null;
+
+function applyMicMuted(): void {
+  micStream?.getAudioTracks().forEach((track) => {
+    track.enabled = !micMeetingMuted;
+  });
+}
 
 /**
  * Chrome ended the capture out from under us (media-process death, tab
@@ -77,10 +89,14 @@ function watchContextState(context: AudioContext, label: string): void {
   };
 }
 
-async function start(streamId: string, targetTabId: number): Promise<void> {
+async function start(streamId: string, targetTabId: number, micMuted: boolean): Promise<void> {
   await stop();
   tabId = targetTabId;
   captureLostReported = false;
+  // Seed AFTER stop()'s reset — on auto-resume the SW passes the persisted
+  // meeting-mute state so a restarted mic never comes up live while the user
+  // is still muted in the meeting.
+  micMeetingMuted = micMuted;
 
   const constraints: TabCaptureConstraints = {
     audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } },
@@ -141,6 +157,7 @@ async function acquireMicrophone(): Promise<void> {
       sendDiag('mic-track-ended');
     });
     micActive = micTrack !== undefined;
+    applyMicMuted(); // the meeting-mute relay may have arrived before the mic did
   } catch (error) {
     micStream = null;
     micActive = false;
@@ -195,12 +212,14 @@ function sendStatus(
   progress?: number,
   message?: string,
 ): void {
-  // Panel shows "Transcribing · {message}" — flag a wanted-but-missing mic
-  // there ("GPU · small.en · mic off") without any new message plumbing.
-  const decorated =
-    state === 'ready' && micRequested && !micActive && message
-      ? `${message} · mic off`
-      : message;
+  // Panel shows "Transcribing · {message}" — flag the mic state there
+  // ("GPU · small.en · mic off" / "· mic muted") without new message plumbing.
+  if (state === 'ready') lastReadyMessage = message ?? null;
+  let decorated = message;
+  if (state === 'ready' && micRequested && message) {
+    if (!micActive) decorated = `${message} · mic off`;
+    else if (micMeetingMuted) decorated = `${message} · mic muted`;
+  }
   const payload: Message = {
     type: 'TRANSCRIBE_STATUS',
     tabId: targetTabId,
@@ -238,6 +257,8 @@ async function stop(): Promise<void> {
   micStream = null;
   micActive = false;
   micRequested = false;
+  micMeetingMuted = false;
+  lastReadyMessage = null;
   audioContext = null;
   analyser = null;
   buffer = null;
@@ -268,10 +289,12 @@ chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
 
   switch (parsed.data.type) {
     case 'OFFSCREEN_START':
-      start(parsed.data.streamId, parsed.data.tabId).catch((error: unknown) => {
-        console.error('Breathe offscreen: capture failed', error);
-        sendDiag('offscreen-start-failed', { message: String(error) });
-      });
+      start(parsed.data.streamId, parsed.data.tabId, parsed.data.micMuted ?? false).catch(
+        (error: unknown) => {
+          console.error('Breathe offscreen: capture failed', error);
+          sendDiag('offscreen-start-failed', { message: String(error) });
+        },
+      );
       return;
     case 'OFFSCREEN_STOP':
       void stop();
@@ -282,6 +305,17 @@ chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
         capturing: stream !== null && stream.getAudioTracks()[0]?.readyState === 'live',
       };
       sendResponse(reply);
+      return;
+    }
+    case 'OFFSCREEN_MIC_STATE': {
+      if (parsed.data.muted === micMeetingMuted) return;
+      micMeetingMuted = parsed.data.muted;
+      applyMicMuted();
+      sendDiag('mic-meeting-mute', { muted: micMeetingMuted });
+      // Refresh the panel's status suffix so the user can see the mic follow.
+      if (tabId !== null && lastReadyMessage) {
+        sendStatus(tabId, 'ready', undefined, lastReadyMessage);
+      }
       return;
     }
   }

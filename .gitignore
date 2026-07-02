@@ -22,9 +22,9 @@ extension/public/ort/
 extension/.env
 extension/.env.*
 
-# Claude Code local (machine-specific notes, API keys)
-.claude/CLAUDE.local.md
-.claude/local/
+# Claude Code local/project notes (machine-specific)
+.claude/
+AGENTS.md
 
 # Logs
 npm-debug.log*

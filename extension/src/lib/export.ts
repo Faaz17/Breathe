@@ -23,9 +23,9 @@ export function formatStarted(startedAt: number): string {
   });
 }
 
-/** "14m 32s" / "1h 04m" — or an em dash when the session never ended cleanly. */
+/** "14m 32s" / "1h 04m", or "N/A" when the session never ended cleanly. */
 export function formatDuration(startedAt: number, endedAt: number | null): string {
-  if (endedAt === null || endedAt < startedAt) return '—';
+  if (endedAt === null || endedAt < startedAt) return 'N/A';
   const totalSeconds = Math.round((endedAt - startedAt) / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -45,7 +45,7 @@ export function sessionToMarkdown(session: Session): string {
     `- **Platform:** ${PLATFORM_LABELS[session.platform]}`,
     `- **Started:** ${formatStarted(session.startedAt)}`,
     `- **Duration:** ${formatDuration(session.startedAt, session.endedAt)}`,
-    `- **Meeting:** ${session.meetingUrl || '—'}`,
+    `- **Meeting:** ${session.meetingUrl || 'N/A'}`,
     '',
     '## Summary',
     '',

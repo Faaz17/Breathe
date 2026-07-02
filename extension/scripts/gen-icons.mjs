@@ -1,6 +1,6 @@
 // Generates Breathe's toolbar icons as real PNGs — no image library needed.
 // Mark: emerald rounded square (calm accent) with a soft white centre dot
-// (the "breath / record" motif from .claude/rules/design_rules.md).
+// (the "breath / record" motif used across the extension UI).
 //
 // Run with: node scripts/gen-icons.mjs  (or: pnpm icons)
 

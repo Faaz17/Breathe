@@ -1,0 +1,55 @@
+name: Build & Release
+
+# Push a version tag (e.g. `git tag v0.2.0 && git push origin v0.2.0`) and this
+# builds the extension and attaches the loadable ZIP to a GitHub Release — no
+# manual packaging. dist/ is gitignored, so the ZIP is the no-toolchain install
+# path for people who don't want to build from source.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create/update releases
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11 # matches the local toolchain (pnpm 11)
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: extension
+        run: pnpm install --frozen-lockfile
+
+      - name: Build extension
+        working-directory: extension
+        run: pnpm build # copy-ort + tsc -b (type-check) + two vite passes + trim-dist
+
+      - name: Package unpacked extension
+        run: |
+          cp -r extension/dist breathe-extension
+          zip -r "breathe-extension-${GITHUB_REF_NAME}.zip" breathe-extension
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="breathe-extension-${GITHUB_REF_NAME}.zip"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$asset" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$asset" \
+              --title "Breathe $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
